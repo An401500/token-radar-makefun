@@ -4,12 +4,14 @@
 // plan, the peer multiples the model is priced from, and the live-token set the
 // board is kept apart from. No network: every byte it shows is in data.js.
 //
-// THE MODEL (radar-2-peer), computed in lib/model.ts from the snapshot alone:
+// THE MODEL (radar-3-peer), computed in lib/model.ts from the snapshot alone:
 //   implied = TVL x peerMultiple x growthMult x maturityMult x chainMult
 //   peerMultiple: median market-cap / TVL of the live-token protocols in the same
 //     category (n >= 3), clamped to [0.05, 1.50]; too few live peers falls back to
-//     the overall live median. A lending protocol is priced like lending protocols
-//     that already trade, a DEX like DEXs that already trade. No name is ever
+//     the overall live median, taken over the live protocols in categories the
+//     board itself can rank (no CEX, bridge or liquid-staking protocol prices
+//     the fallback). A lending protocol is priced like lending protocols that
+//     already trade, a DEX like DEXs that already trade. No name is ever
 //     special-cased.
 //   growthMult: 1 + clamp(change_7d, -60, +120) / 100 x 0.5
 //   maturityMult: 0.6 + min(age_days, 1095) / 1095 x 0.4 (age unknown: 365 days)
@@ -78,63 +80,11 @@
     return node;
   }
 
-  // ---- farm plan: the same derivation as lib/model.ts ----
-  function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
-  function holdDaysFor(age) {
-    if (age === null || age === undefined) return 30;
-    if (age < 180) return 60;
-    if (age < 365) return 45;
-    return 30;
-  }
-  function actionFor(p, capital, chain) {
-    var c = (p.category || '').toLowerCase();
-    var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the position open.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' and keep the position open.';
-    if (c.indexOf('yield') >= 0 && c.indexOf('curator') < 0 && c.indexOf('allocator') < 0) return 'Deposit $' + capital + ' of USDC into ' + name + "'s main vault on " + chain + ' and keep the shares.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the shares.';
-    if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + name + ' and use the bridged funds in its app.';
-    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Stake $' + capital + ' of the chain\'s staking asset through ' + name + ' and keep the receipt.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('basis') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedge.';
-    if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + name + '.';
-    if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + '.';
-    if (c.indexOf('rwa') >= 0) return 'Mint $' + capital + ' of the protocol\'s yield asset on ' + chain + ' and hold it.';
-    if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy.';
-    if (c.indexOf('payment') >= 0 || c.indexOf('chain') >= 0) return 'Use ' + name + ' for one real payment or transfer of $' + capital + ' on ' + chain + '.';
-    return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and keep the position open.';
-  }
-  function weeklyFor(p) {
-    var c = (p.category || '').toLowerCase();
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0) return 'Make one qualifying action each week: add collateral, borrow a little, or repay and re-borrow.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0) return 'Make one qualifying action each week: add or rebalance liquidity, or claim and restake rewards.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('basis') >= 0) return 'Make one qualifying action each week: open and close one small hedge.';
-    if (c.indexOf('prediction') >= 0) return 'Make one qualifying action each week: settle one market position.';
-    if (c.indexOf('rwa') >= 0 || c.indexOf('stable') >= 0) return 'Make one qualifying action each week: mint, redeem or transfer a small amount.';
-    return 'Make one qualifying action each week: a deposit, a swap, a vote or a claim.';
-  }
-  function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    var steps = [
-      { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
-      { text: weeklyFor(p), cost: 'about $2 of gas a week', time: '10 minutes a week' },
-      { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: 'Before you withdraw, open the protocol\'s own points or rewards page and claim only from the link it publishes; never pay anyone to claim for you.', cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-      { text: 'Farming risks the $' + capital + ' itself: a smart-contract bug or a depeg can lose it, and a token may never be issued, so only farm money you can afford to lose.', cost: 'up to the full $' + capital + ' at risk', time: '5 minutes to note the risk' }
-    ];
-    return steps.map(function (s) {
-      var t = s.text + ' Cost: ' + s.cost + '. Time: ' + s.time + '.';
-      return { text: t, risk: s === steps[5] };
-    });
-  }
+  // ---- farm plan: it arrives in each row's farm_steps, written by lib/model.ts
+  // from the same derivation (category, chains, TVL and age decide the action,
+  // the capital, the hold and every cost and time). The page renders the strings
+  // the board carries, so the page and board.json can never drift apart; the
+  // last step is the risk note.
 
   // ---- hash state ----
   function readHash() {
@@ -225,7 +175,7 @@
         el('div', { class: 'rank', text: 'RANK #' + r.rank + (r.on_watchlist ? ' · WATCHLIST' : '') }),
         el('div', { class: 'name', text: r.name }),
         el('div', { class: 'val', text: usd(r.implied_value_usd) }),
-        el('div', { class: 'det', text: 'TVL ' + usd(r.tvl_usd) + ' · 7d ' + pct(r.change_7d) + ' · ' + (r.category || 'Other') })
+        el('div', { class: 'det', text: 'TVL ' + usd(r.tvl_usd) + ' · 7d ' + pct(r.change_7d) + ' · ' + (r.category || 'Other') + ' · peer ' + r.peer_multiple.toFixed(2) + '×' })
       ));
     });
     wrap.appendChild(grid);
@@ -302,14 +252,17 @@
   }
 
   function detailView(wrap, row) {
-    var steps = farmSteps(row);
+    var steps = row.farm_steps;
     var d = el('div', { class: 'detail' });
     d.appendChild(el('button', { class: 'back', text: '← Back to the board', onclick: function () { state.detail = null; writeHash(); render(); } }));
     d.appendChild(el('h2', { html: esc(row.name) + (row.on_watchlist ? '<span class="badge">WATCHLIST</span>' : '') }));
     d.appendChild(el('p', { class: 'sub', text: 'Rank #' + row.rank + ' of ' + DATA.board_size + ' · ' + (row.category || 'Other') + ' · ' + row.chains.join(', ') + ' · Records no token in the snapshot.' }));
     d.appendChild(el('div', { class: 'big', html: esc(usd(row.implied_value_usd)) + ' <small>implied value — this entry\'s own claim</small>' }));
     var kv = el('div', { class: 'kv' });
-    [['TVL', usd(row.tvl_usd)], ['7-day change', pct(row.change_7d)], ['Age since listing', ageFmt(row.age_days)], ['Peer multiple', row.peer_multiple.toFixed(2) + '× (' + row.peer_source + ')']].forEach(function (pair) {
+    var peerLabel = row.peer_source === 'category peers'
+      ? row.peer_multiple.toFixed(2) + '× · median of ' + row.peer_n + ' live peers'
+      : row.peer_multiple.toFixed(2) + '× · overall median of ' + DATA.overall_peer_n + ' live protocols';
+    [['TVL', usd(row.tvl_usd)], ['7-day change', pct(row.change_7d)], ['Age since listing', ageFmt(row.age_days)], ['Peer multiple', peerLabel]].forEach(function (pair) {
       kv.appendChild(el('div', {}, el('div', { class: 'k', text: pair[0] }), el('div', { class: 'v', text: pair[1] })));
     });
     d.appendChild(kv);
@@ -319,7 +272,7 @@
     var mb = el('tbody');
     [
       ['TVL', usd(row.tvl_usd), 'Snapshot, ' + DATA.as_of],
-      ['× Peer multiple (' + (row.category || 'Other') + ')', row.peer_multiple.toFixed(2) + '×', row.peer_source === 'category peers' ? 'Median market-cap / TVL of live-token protocols in this category' : 'Overall live median — too few live peers in this category'],
+      ['× Peer multiple (' + (row.category || 'Other') + ')', row.peer_multiple.toFixed(2) + '×', row.peer_source === 'category peers' ? 'Median market-cap / TVL of ' + row.peer_n + ' live-token protocols in this category' : 'Overall live median of ' + DATA.overall_peer_n + ' live protocols in categories the board can rank — too few live peers in this category'],
       ['× Growth multiplier', row.growth_multiplier.toFixed(2) + '×', '7-day TVL change ' + pct(row.change_7d) + ', clamped to −60%…+120%'],
       ['× Maturity multiplier', row.maturity_multiplier.toFixed(2) + '×', 'Age ' + ageFmt(row.age_days) + ' on a 0.60–1.00 scale over 3 years'],
       ['× Chain multiplier', row.chain_multiplier.toFixed(2) + '×', row.chains.length + ' chain' + (row.chains.length === 1 ? '' : 's') + ' counted']
@@ -330,10 +283,9 @@
     d.appendChild(el('h2', { class: 'sec', text: 'How to farm it' }));
     var ol = el('ol', { class: 'farm' });
     steps.forEach(function (s, i) {
-      var li = el('li', { html: esc(s.text) });
-      if (s.risk) li.className = 'risk';
+      var li = el('li', { html: esc(s) });
+      if (i === steps.length - 1) li.className = 'risk';
       ol.appendChild(li);
-      void i;
     });
     d.appendChild(ol);
     d.appendChild(el('div', { class: 'note', text: '“Records no token” means the snapshot\'s DefiLlama record carries no market cap, CoinGecko id or symbol for this protocol. It is not proof the protocol has no token. A token may never be issued, and farming is not a promise of an airdrop.' }));
@@ -342,7 +294,7 @@
 
   function modelSection(wrap) {
     wrap.appendChild(el('h2', { class: 'sec', text: 'The model: priced off live peers, not a flat rate' }));
-    wrap.appendChild(el('p', { class: 'lede', text: 'Implied value = TVL × peer multiple × growth × maturity × chains. The peer multiple is the median market-cap-to-TVL ratio of the live-token protocols in the same category, read off this very snapshot — a lending protocol is priced like lending protocols that already trade, a DEX like DEXs that already trade. Categories with fewer than 3 live peers fall back to the overall live median of 0.20×. No protocol name is ever special-cased.' }));
+    wrap.appendChild(el('p', { class: 'lede', text: 'Implied value = TVL × peer multiple × growth × maturity × chains. The peer multiple is the median market-cap-to-TVL ratio of the live-token protocols in the same category, read off this very snapshot — a lending protocol is priced like lending protocols that already trade, a DEX like DEXs that already trade. Categories with fewer than 3 live peers fall back to the overall live median of ' + DATA.overall_peer_multiple.toFixed(2) + '×, taken over ' + DATA.overall_peer_n + ' live protocols in categories the board can rank. No protocol name is ever special-cased.' }));
     var cols = el('div', { class: 'cols' });
     var left = el('div');
     left.appendChild(el('h2', { class: 'sec', text: 'Peer multiples by category' }));
@@ -352,6 +304,7 @@
     DATA.peers.forEach(function (p) {
       tb.appendChild(el('tr', {}, el('td', { text: p.category }), el('td', { class: 'num', text: p.multiple.toFixed(2) + '×' }), el('td', { class: 'num', text: String(p.n) }), el('td', { text: p.source })));
     });
+    tb.appendChild(el('tr', { class: 'total' }, el('td', { text: 'Overall — the fallback' }), el('td', { class: 'num', text: DATA.overall_peer_multiple.toFixed(2) + '×' }), el('td', { class: 'num', text: String(DATA.overall_peer_n) }), el('td', { text: 'overall fallback' })));
     t.appendChild(tb);
     left.appendChild(t);
     var right = el('div');

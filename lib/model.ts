@@ -7,9 +7,15 @@
 //
 //   peerMultiple  the median market-cap-to-TVL ratio of the live-token protocols in
 //                 the same category, read off the snapshot itself (n >= 3); clamped
-//                 to [0.05, 1.50]; categories with too few live peers fall back to
-//                 the overall live median. A lending protocol is priced like lending
-//                 protocols that already trade, a DEX like DEXs that already trade.
+//                 to [0.05, 1.50]. A category with too few live peers falls back to
+//                 the overall live median, taken over the live-token protocols in
+//                 categories the board itself can rank: the house's exclusion rule
+//                 bounds the pool, so no CEX, bridge or liquid-staking protocol
+//                 prices the fallback (their ratios say nothing about a pre-token
+//                 protocol — a CEX's median is 0.08x, liquid staking's 0.04x —
+//                 and pooling them dragged the fallback from 0.24x to 0.21x).
+//                 A lending protocol is priced like lending protocols that already
+//                 trade, a DEX like DEXs that already trade.
 //   growthMult    1 + clamp(change_7d, -60, +120) / 100 x 0.5
 //   maturityMult  0.6 + min(age_days, 1095) / 1095 x 0.4 (age unknown: 365 days)
 //   chainMult     1 + 0.02 x min(chains - 1, 5): a protocol live on more chains has
@@ -82,7 +88,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-2-peer';
+export const MODEL_VERSION = 'radar-3-peer';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -138,10 +144,12 @@ export interface RadarRow {
   on_watchlist: boolean;
   implied_value_usd: number;
   peer_multiple: number;
+  peer_n: number;
   peer_source: string;
   growth_multiplier: number;
   maturity_multiplier: number;
   chain_multiplier: number;
+  farm_steps: string[];
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value. */
@@ -176,6 +184,8 @@ export interface RadarData {
   early_size: number;
   live_size: number;
   total_implied_usd: number;
+  overall_peer_multiple: number;
+  overall_peer_n: number;
   rows: RadarRow[];
   live: LiveRow[];
   peers: PeerMultiple[];
@@ -213,22 +223,34 @@ function median(values: number[]): number {
   return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
+/** The categories the house's exclusion rule keeps off the board — and out of the fallback pool. */
+const EXCLUDED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX']);
+
 /** The peer multiples: median live mcap/TVL per category, clamped, with an overall fallback. */
-export function peerMultiples(snapshot: Snapshot, model: ModelConstants = MODEL): { byCategory: Map<string, PeerMultiple>; overall: number } {
+export interface PeerSet {
+  byCategory: Map<string, PeerMultiple>;
+  overall: number;
+  overallN: number;
+}
+
+export function peerMultiples(snapshot: Snapshot, model: ModelConstants = MODEL): PeerSet {
   const byCat = new Map<string, number[]>();
-  const all: number[] = [];
+  const pool: number[] = [];
   for (const p of snapshot.protocols) {
     if (p.mcap_usd === null || p.mcap_usd <= 0 || p.tvl_usd <= 0) continue;
     const ratio = p.mcap_usd / p.tvl_usd;
     if (!Number.isFinite(ratio) || ratio <= 0) continue;
-    all.push(ratio);
+    // The fallback pool holds only live protocols in categories the board can
+    // rank: a CEX or a liquid-staking token trades at a ratio that says nothing
+    // about a pre-token protocol, so the house's own exclusion rule bounds it.
+    if (p.category === null || !EXCLUDED_CATEGORIES.has(p.category)) pool.push(ratio);
     if (p.category !== null) {
       const list = byCat.get(p.category) ?? [];
       list.push(ratio);
       byCat.set(p.category, list);
     }
   }
-  const overall = Math.min(model.peer_cap, Math.max(model.peer_floor, median(all)));
+  const overall = Math.min(model.peer_cap, Math.max(model.peer_floor, median(pool)));
   const byCategory = new Map<string, PeerMultiple>();
   for (const [category, ratios] of byCat) {
     if (ratios.length >= model.peer_min_n) {
@@ -240,11 +262,11 @@ export function peerMultiples(snapshot: Snapshot, model: ModelConstants = MODEL)
       });
     }
   }
-  return { byCategory, overall };
+  return { byCategory, overall, overallN: pool.length };
 }
 
 /** The peer multiple one protocol is priced at, and where it came from. */
-export function peerFor(p: SnapshotProtocol, peers: { byCategory: Map<string, PeerMultiple>; overall: number }): PeerMultiple {
+export function peerFor(p: SnapshotProtocol, peers: PeerSet): PeerMultiple {
   const hit = p.category !== null ? peers.byCategory.get(p.category) : undefined;
   if (hit !== undefined) return hit;
   return { category: p.category ?? 'Other', multiple: peers.overall, n: 0, source: 'overall fallback' };
@@ -254,7 +276,7 @@ export function peerFor(p: SnapshotProtocol, peers: { byCategory: Map<string, Pe
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
-  peers: { byCategory: Map<string, PeerMultiple>; overall: number },
+  peers: PeerSet,
   model: ModelConstants = MODEL,
 ): { implied: number; peer: PeerMultiple; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; age: number | null } {
   const peer = peerFor(protocol, peers);
@@ -276,7 +298,6 @@ export function isPreToken(p: SnapshotProtocol): boolean {
 
 /** The house's own exclusion rule, applied to every row, not just the watchlist. */
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
-const EXCLUDED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX']);
 const WRAPPED_WORD = /\b(wrapped|staked|staking)\b/i;
 const EXCHANGE_PREFIX = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/;
 
@@ -490,10 +511,12 @@ export function radarRow(row: BoardRow): RadarRow {
     on_watchlist: row.on_watchlist,
     implied_value_usd: row.implied_value_usd,
     peer_multiple: row.model.peer_multiple,
+    peer_n: row.model.peer_n,
     peer_source: row.model.peer_source,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
+    farm_steps: row.farm_steps,
   };
 }
 
@@ -515,6 +538,8 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     early_size: early,
     live_size: live.length,
     total_implied_usd: board.reduce((s, r) => s + r.implied_value_usd, 0),
+    overall_peer_multiple: round4(peers.overall),
+    overall_peer_n: peers.overallN,
     rows: board.map(radarRow),
     live,
     peers: peerList,

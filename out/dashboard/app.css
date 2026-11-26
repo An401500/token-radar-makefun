@@ -5,12 +5,10 @@
   --muted: #5d6470;
   --line: #ddd6c4;
   --teal: #0f766e;
-  --teal-dark: #0b5e57;
   --amber: #b45309;
   --green: #15803d;
   --red: #b91c1c;
   --gold: #fef3c7;
-  --chip: #eef2f0;
 }
 * { box-sizing: border-box; }
 html { font-size: 15px; }
@@ -94,7 +92,6 @@ table.model td.num, table.model th.num { text-align: right; font-variant-numeric
 table.model tr.total td { font-weight: 800; border-top: 2px solid var(--ink); }
 ol.farm { margin: 8px 0; padding-left: 22px; }
 ol.farm li { margin: 8px 0; }
-ol.farm .cost { color: var(--teal-dark); font-weight: 700; }
 ol.farm .risk { color: var(--red); }
 .note { background: #fdf6e3; border: 1px solid #e7d9a8; border-radius: 8px; padding: 10px 14px; font-size: 0.92rem; margin: 12px 0; }
 .back { font: inherit; background: none; border: none; color: var(--teal); cursor: pointer; padding: 0; font-weight: 700; }
@@ -104,6 +101,7 @@ table.plain { width: 100%; border-collapse: collapse; background: var(--panel); 
 table.plain th, table.plain td { padding: 8px 10px; border-bottom: 1px solid #eee8d8; text-align: left; font-variant-numeric: tabular-nums; }
 table.plain th { background: #efe9d8; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
 table.plain td.num, table.plain th.num { text-align: right; }
+table.plain tr.total td { font-weight: 800; border-top: 2px solid var(--ink); }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 footer { margin-top: 30px; border-top: 2px solid var(--ink); padding-top: 12px; font-size: 0.85rem; color: var(--muted); }
 @media (max-width: 760px) {
